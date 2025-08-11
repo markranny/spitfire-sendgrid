@@ -58,6 +58,7 @@ function buildPilotEmailData(data: SubmissionData) {
   
   return {
     pilotName: data.name,
+    pilotEmail: data.email, 
     airline: data.airlinePreference,
     position: data.position || 'Not specified',
     hasPosition: Boolean(data.position && data.position.trim()),
