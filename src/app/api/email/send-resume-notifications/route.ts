@@ -134,39 +134,36 @@ export async function POST(request: NextRequest) {
 
     console.log(`Processing submission from ${requestData.name} (${requestData.airlinePreference})`);
 
-    const pilotData = buildPilotEmailData(requestData);
-    const adminData = buildAdminEmailData(requestData);
-    const adminEmail = process.env.ADMIN_EMAIL || 'admin@spitfirepremier.com';
-
-    const [pilotResult, adminResult] = await Promise.allSettled([
-      deliverEmail(requestData.email, PILOT_TEMPLATE_ID, pilotData),
-      deliverEmail(adminEmail, ADMIN_TEMPLATE_ID, adminData)
-    ]);
-
     let pilotEmailSent = false;
     let adminEmailSent = false;
     const emailErrors = [];
 
-    if (pilotResult.status === 'fulfilled' && pilotResult.value.sent) {
+    const pilotData = buildPilotEmailData(requestData);
+    const pilotResult = await deliverEmail(requestData.email, PILOT_TEMPLATE_ID, pilotData);
+    
+    if (pilotResult.sent) {
       pilotEmailSent = true;
       console.log('Pilot confirmation sent');
     } else {
-      const error = pilotResult.status === 'fulfilled' 
-        ? pilotResult.value.reason 
-        : pilotResult.reason;
-      emailErrors.push(`Pilot email: ${error}`);
-      console.error('Failed to send pilot email:', error);
+      emailErrors.push(`Pilot email: ${pilotResult.reason}`);
+      console.error('Failed to send pilot email:', pilotResult.reason);
     }
 
-    if (adminResult.status === 'fulfilled' && adminResult.value.sent) {
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@spitfirepremier.com';
+    console.log('Admin email being used:', adminEmail);
+    console.log('All env vars:', { 
+      ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+      SENDGRID_FROM_EMAIL: process.env.SENDGRID_FROM_EMAIL 
+    });
+    const adminData = buildAdminEmailData(requestData);
+    const adminResult = await deliverEmail(adminEmail, ADMIN_TEMPLATE_ID, adminData);
+    
+    if (adminResult.sent) {
       adminEmailSent = true;
       console.log('Admin notification sent');
     } else {
-      const error = adminResult.status === 'fulfilled' 
-        ? adminResult.value.reason 
-        : adminResult.reason;
-      emailErrors.push(`Admin email: ${error}`);
-      console.error('Failed to send admin email:', error);
+      emailErrors.push(`Admin email: ${adminResult.reason}`);
+      console.error('Failed to send admin email:', adminResult.reason);
     }
 
     const responseData: any = {
