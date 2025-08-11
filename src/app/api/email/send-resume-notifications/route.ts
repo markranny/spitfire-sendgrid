@@ -20,6 +20,7 @@ async function deliverEmail(recipient: string, templateId: string, templateData:
   }
 
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+  sgMail.setTimeout(8000);
 
   try {
     const emailConfig = {
@@ -102,15 +103,42 @@ function buildAdminEmailData(data: SubmissionData) {
 }
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  console.log('Function started at:', new Date().toISOString());
+  console.log('Environment check:', {
+    hasApiKey: !!process.env.SENDGRID_API_KEY,
+    hasFromEmail: !!process.env.SENDGRID_FROM_EMAIL,
+    hasPilotTemplate: !!process.env.SENDGRID_PILOT_CONFIRMATION_TEMPLATE_ID,
+    hasAdminTemplate: !!process.env.SENDGRID_ADMIN_NOTIFICATION_TEMPLATE_ID
+  });
+  
   try {
     const user = await getUser(request);
     if (!user) {
+      console.log('❌ User not authorized');
       return Response.json({ success: false, error: "Not authorized" }, { status: 401 });
     }
+    console.log('✅ User authorized:', user.id);
 
-    const requestData: SubmissionData = await request.json();
+    let requestData: SubmissionData;
+    try {
+      requestData = await request.json();
+      console.log('📨 Request data received:', { 
+        name: requestData.name, 
+        email: requestData.email, 
+        airline: requestData.airlinePreference 
+      });
+    } catch (jsonError) {
+      console.log('❌ JSON parsing error:', jsonError);
+      return Response.json({ success: false, error: "Invalid JSON data" }, { status: 400 });
+    }
     
     if (!requestData.name?.trim() || !requestData.email?.trim() || !requestData.airlinePreference?.trim()) {
+      console.log('❌ Missing required fields:', {
+        hasName: !!requestData.name?.trim(),
+        hasEmail: !!requestData.email?.trim(),
+        hasAirline: !!requestData.airlinePreference?.trim()
+      });
       return Response.json(
         { success: false, error: "Pilot name, email, and airline are required" },
         { status: 400 }
@@ -118,6 +146,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!/\S+@\S+\.\S+/.test(requestData.email)) {
+      console.log('❌ Invalid email format:', requestData.email);
       return Response.json(
         { success: false, error: "Please provide a valid email address" },
         { status: 400 }
@@ -125,7 +154,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (!PILOT_TEMPLATE_ID || !ADMIN_TEMPLATE_ID) {
-      console.error('Missing email templates in environment config');
+      console.error('❌ Missing email templates in environment config', {
+        PILOT_TEMPLATE_ID: !!PILOT_TEMPLATE_ID,
+        ADMIN_TEMPLATE_ID: !!ADMIN_TEMPLATE_ID
+      });
       return Response.json(
         { success: false, error: "Email system configuration error" },
         { status: 500 }
@@ -133,37 +165,46 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`Processing submission from ${requestData.name} (${requestData.airlinePreference})`);
+    console.log('Environment check:', {
+      hasApiKey: !!process.env.SENDGRID_API_KEY,
+      hasFromEmail: !!process.env.SENDGRID_FROM_EMAIL,
+      hasPilotTemplate: !!PILOT_TEMPLATE_ID,
+      hasAdminTemplate: !!ADMIN_TEMPLATE_ID
+    });
+
+    const pilotData = buildPilotEmailData(requestData);
+    const adminData = buildAdminEmailData(requestData);
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@spitfirepremier.com';
+
+    const [pilotResult, adminResult] = await Promise.allSettled([
+      deliverEmail(requestData.email, PILOT_TEMPLATE_ID, pilotData),
+      deliverEmail(adminEmail, ADMIN_TEMPLATE_ID, adminData)
+    ]);
 
     let pilotEmailSent = false;
     let adminEmailSent = false;
     const emailErrors = [];
 
-    const pilotData = buildPilotEmailData(requestData);
-    const pilotResult = await deliverEmail(requestData.email, PILOT_TEMPLATE_ID, pilotData);
-    
-    if (pilotResult.sent) {
+    if (pilotResult.status === 'fulfilled' && pilotResult.value.sent) {
       pilotEmailSent = true;
       console.log('Pilot confirmation sent');
     } else {
-      emailErrors.push(`Pilot email: ${pilotResult.reason}`);
-      console.error('Failed to send pilot email:', pilotResult.reason);
+      const error = pilotResult.status === 'fulfilled' 
+        ? pilotResult.value.reason 
+        : pilotResult.reason;
+      emailErrors.push(`Pilot email: ${error}`);
+      console.error('Failed to send pilot email:', error);
     }
 
-    const adminEmail = process.env.ADMIN_EMAIL || 'admin@spitfirepremier.com';
-    console.log('Admin email being used:', adminEmail);
-    console.log('All env vars:', { 
-      ADMIN_EMAIL: process.env.ADMIN_EMAIL,
-      SENDGRID_FROM_EMAIL: process.env.SENDGRID_FROM_EMAIL 
-    });
-    const adminData = buildAdminEmailData(requestData);
-    const adminResult = await deliverEmail(adminEmail, ADMIN_TEMPLATE_ID, adminData);
-    
-    if (adminResult.sent) {
+    if (adminResult.status === 'fulfilled' && adminResult.value.sent) {
       adminEmailSent = true;
       console.log('Admin notification sent');
     } else {
-      emailErrors.push(`Admin email: ${adminResult.reason}`);
-      console.error('Failed to send admin email:', adminResult.reason);
+      const error = adminResult.status === 'fulfilled' 
+        ? adminResult.value.reason 
+        : adminResult.reason;
+      emailErrors.push(`Admin email: ${error}`);
+      console.error('Failed to send admin email:', error);
     }
 
     const responseData: any = {
@@ -177,6 +218,7 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('Email processing complete:', responseData);
+    console.log('Total execution time:', Date.now() - startTime, 'ms');
     return Response.json(responseData);
 
   } catch (error: any) {

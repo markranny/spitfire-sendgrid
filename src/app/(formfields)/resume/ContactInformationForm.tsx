@@ -98,9 +98,9 @@ const ContactInformationForm = ({ existingSubmission }: ContactInformationFormPr
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          pilotName: submissionData.name,
-          pilotEmail: submissionData.email,
-          airline: submissionData.airlinePreference,
+          name: submissionData.name,
+          email: submissionData.email,
+          airlinePreference: submissionData.airlinePreference,
           position: submissionData.position,
           selectedTemplates: selectedTemplatesList,
         }),
